@@ -60,10 +60,10 @@ const defaultFormationName = fmtKey => {
 };
 /* Per-format setting defaults — applied when the user picks a format,
    matching the SvFF Nationella spelformer (youth-football norms):
-    - 3v3 (U6–U8): 4×3 min, no mid-period subs, no goalkeeper, free
+    - 3v3 (6–7 år): 4×3 min, no mid-period subs, no goalkeeper, free
       positions (everyone plays everywhere)
-    - 5v5 (U9–U10): 3×15 min, 1 sub per period, positions enabled
-    - 7v7 (U11–U13): 3×20 min, 1 sub per period, positions enabled */
+    - 5v5 (8–9 år): 3×15 min, 1 sub per period, positions enabled
+    - 7v7 (10–12 år): 3×20 min, 1 sub per period, positions enabled */
 const FORMAT_DEFAULTS = {
   "3v3": { duration: 3,  periods: 4, subs: 0, positions: false },
   "5v5": { duration: 15, periods: 3, subs: 1, positions: true  },
@@ -1308,9 +1308,9 @@ export default function App() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 480 }}>
             {[
-              { key: "3v3", title: "3v3",  sub: "U6–U8",   meta: "4 × 3 min · ingen målvakt" },
-              { key: "5v5", title: "5v5",  sub: "U9–U10",  meta: "3 × 15 min · 1 byte/period" },
-              { key: "7v7", title: "7v7",  sub: "U11–U13", meta: "3 × 20 min · 1 byte/period" },
+              { key: "3v3", title: "3v3",  sub: "6–7 år",   meta: "4 × 3 min · ingen målvakt" },
+              { key: "5v5", title: "5v5",  sub: "8–9 år",   meta: "3 × 15 min · 1 byte/period" },
+              { key: "7v7", title: "7v7",  sub: "10–12 år", meta: "3 × 20 min · 1 byte/period" },
             ].map(f => (
               <button
                 key={f.key}
