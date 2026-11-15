@@ -1260,12 +1260,42 @@ export default function App() {
           ? <Chip id={curId} inGKSlot={isGKLabel} periodIdx={periodIdx} flavor={justChanged ? "in" : undefined} />
           : <div style={{ background: "#ffffff", border: "1.5px dashed #0a0a0a", borderRadius: 999, padding: "3px 10px", fontSize: 12, color: "#a3a3a3", display: "inline-block" }}>—</div>
         }
-        {justChanged && prevId && (
-          <div style={{ marginTop: 5, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-            <ArrowUpDown size={10} color="#525252" style={{ flexShrink: 0 }} />
-            <Chip id={prevId} inGKSlot={isGKLabel} periodIdx={periodIdx} flavor="out" />
-          </div>
-        )}
+        {justChanged && prevId && (() => {
+          /* Variant B — show the outgoing player as a strikethrough name
+             below the new pill instead of a full red chip. Still tappable
+             so the coach can override the swap manually. */
+          const prevP = getP(prevId);
+          if (!prevP || prevP.enabled === false) return null;
+          const prevIsSelected = sel?.id === prevId;
+          return (
+            <div
+              onClick={e => { e.stopPropagation(); tapPlayer(prevId, periodIdx); }}
+              title="Tryck för att byta plats manuellt"
+              style={{
+                marginTop: 4,
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                fontSize: 13, fontWeight: 600,
+                color: "#991b1b",
+                padding: "1px 6px",
+                borderRadius: 5,
+                cursor: "pointer",
+                boxShadow: prevIsSelected ? "0 0 0 2.5px #facc15, 0 0 0 4px #0a0a0a" : "none",
+                userSelect: "none", WebkitUserSelect: "none",
+              }}
+            >
+              {prevP.isGK && isGKLabel && (
+                <span style={{ fontSize: 10, color: "#991b1b", opacity: 0.75, textDecoration: "none" }}>mv</span>
+              )}
+              <span style={{
+                textDecoration: "line-through",
+                textDecorationColor: "#dc2626",
+                textDecorationThickness: "2px",
+                textDecorationSkipInk: "none",
+              }}>{displayName(prevP)}</span>
+            </div>
+          );
+        })()}
       </div>
     );
   };
