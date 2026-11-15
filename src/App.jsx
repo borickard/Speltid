@@ -1081,9 +1081,9 @@ export default function App() {
         onClick={e => { e.stopPropagation(); tapPlayer(id, periodIdx); }}
         style={{
           display: "inline-flex", alignItems: "center", gap: 5,
-          background: isSelected ? "#facc15" : (flavorBg ?? "#ffffff"),
-          color: isSelected ? "#0a0a0a" : flavorColor,
-          border: `1.5px solid ${isSelected ? "#0a0a0a" : activeGK ? GK_COLOR : (flavorBorder ?? "#0a0a0a")}`,
+          background: flavorBg ?? "#ffffff",
+          color: flavorColor,
+          border: `1.5px solid ${activeGK ? GK_COLOR : (flavorBorder ?? "#0a0a0a")}`,
           borderRadius: 999,
           padding: small ? "4px 11px" : "6px 13px",
           fontSize: small ? 13 : 14,
@@ -1096,7 +1096,11 @@ export default function App() {
           transition: "all 0.15s",
           userSelect: "none", WebkitUserSelect: "none",
           opacity: isSel2nd ? 0.75 : 1,
-          boxShadow: isSelected ? "0 0 0 3px rgba(250,204,21,0.35)" : "none",
+          /* Marked chip keeps its own colour (green/red/white/mv) so the
+             coach still sees the player's current state while they pick a
+             swap target. A yellow ring + thin black outline reads as the
+             selection marker without wiping the underlying state. */
+          boxShadow: isSelected ? "0 0 0 3px #facc15, 0 0 0 4.5px #0a0a0a" : "none",
           animation: isSwapping ? "swap-pulse 0.85s ease-out" : undefined,
           whiteSpace: "nowrap",
         }}
