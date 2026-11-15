@@ -395,6 +395,25 @@ export default function App() {
     periods: 3, duration: 15, subs: 1, format: "5v5", formation: defaultFormationName("5v5"), shuffleSalt: 0, positions: true, keepPositionsInPeriod: true,
     ...(initFromURL?.settings ?? {}),
   });
+  /* Onboarding: first-time visitors (no shared URL state, no stored flag)
+     pick a format before the rest of the Spelare tab reveals itself. */
+  const [onboarded, setOnboarded] = useState(() => {
+    if (initFromURL) return true;
+    try { return localStorage.getItem("speltid-onboarded-v1") === "1"; } catch { return true; }
+  });
+  const markOnboarded = () => {
+    setOnboarded(true);
+    try { localStorage.setItem("speltid-onboarded-v1", "1"); } catch {}
+  };
+  /* Coaching mode — "auto" lets the algorithm propose everything, "manuell"
+     hands the coach more free rein (same plan, different toolset). Persist
+     the last-used choice so you don't re-pick every match. */
+  const [mode, setMode] = useState(() => {
+    try { return localStorage.getItem("speltid-mode-v1") === "manuell" ? "manuell" : "auto"; } catch { return "auto"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("speltid-mode-v1", mode); } catch {}
+  }, [mode]);
   const [plan, setPlan]         = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
   const [originalPlan, setOriginalPlan] = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
   const [sel, setSel]           = useState(null);
@@ -857,7 +876,9 @@ export default function App() {
     try {
       localStorage.removeItem("speltid-timer-v1");
       localStorage.removeItem("sanktan-timer-v1");
+      localStorage.removeItem("speltid-onboarded-v1");
     } catch {}
+    setOnboarded(false);
   };
 
   const copyShareUrl = async () => {
@@ -1258,6 +1279,82 @@ export default function App() {
   return (
     <div style={S.app} onClick={() => setSel(null)}>
 
+      {/* Onboarding — first-time visitors pick a format before anything else
+          shows up. Dismisses itself permanently once a format is chosen. */}
+      {!onboarded && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 200,
+          background: "#ffffff",
+          display: "flex", flexDirection: "column",
+          padding: "40px 20px 24px",
+          overflow: "auto",
+        }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 2, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#0a0a0a", marginBottom: 32 }}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ marginRight: 4 }}>
+              <circle cx="12" cy="12" r="7.5" fill="#0a0a0a"/>
+              <rect x="9.5" y="0" width="5" height="3" rx="0.5" fill="#0a0a0a"/>
+              <line x1="12" y1="3" x2="12" y2="4.5" stroke="#0a0a0a" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="12" y1="12" x2="15.5" y2="8.5" stroke="#facc15" strokeWidth="2.3" strokeLinecap="round"/>
+              <circle cx="12" cy="12" r="1.2" fill="#ffffff"/>
+            </svg>
+            Speltid
+          </div>
+          <div style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", fontSize: 20, fontWeight: 700, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: 6, maxWidth: 480 }}>
+            Välj spelform
+          </div>
+          <div style={{ fontSize: 13, color: "#525252", lineHeight: 1.5, marginBottom: 28, maxWidth: 480 }}>
+            Matcher körs enligt SvFF:s nationella spelformer. Du kan ändra inställningarna sen.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 480 }}>
+            {[
+              { key: "3v3", title: "3v3",  sub: "U6–U8",   meta: "4 × 3 min · ingen målvakt" },
+              { key: "5v5", title: "5v5",  sub: "U9–U10",  meta: "3 × 15 min · 1 byte/period" },
+              { key: "7v7", title: "7v7",  sub: "U11–U13", meta: "3 × 20 min · 1 byte/period" },
+            ].map(f => (
+              <button
+                key={f.key}
+                onClick={() => {
+                  const d = FORMAT_DEFAULTS[f.key] ?? {};
+                  setSettings(s => ({
+                    ...s,
+                    format: f.key,
+                    formation: defaultFormationName(f.key),
+                    ...d,
+                  }));
+                  markOnboarded();
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  padding: "16px 18px",
+                  background: "#ffffff", border: "2px solid #0a0a0a", borderRadius: 12,
+                  cursor: "pointer", textAlign: "left",
+                  fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                  transition: "background 0.15s",
+                }}
+                onMouseDown={e => { e.currentTarget.style.background = "#facc15"; }}
+                onMouseUp={e => { e.currentTarget.style.background = "#ffffff"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "#ffffff"; }}
+              >
+                <div style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 24, fontWeight: 700,
+                  background: "#facc15", color: "#0a0a0a",
+                  padding: "6px 14px", borderRadius: 6, border: "1.5px solid #0a0a0a",
+                  flexShrink: 0,
+                }}>{f.title}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#0a0a0a" }}>{f.sub}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#525252", marginTop: 2 }}>{f.meta}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <div style={{ marginTop: 32, fontSize: 11, color: "#737373", maxWidth: 480 }}>
+            Du kan byta spelform när som helst i Matchinställningar.
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={S.header}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -1278,6 +1375,28 @@ export default function App() {
             </svg>
             Speltid
             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#0a0a0a", background: "#facc15", padding: "2px 8px", borderRadius: 4, letterSpacing: "0.04em", fontWeight: 700, border: "1.5px solid #0a0a0a", marginLeft: 8 }}>{settings.format}</span>
+          </div>
+          {/* Auto / Manuell mode toggle */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ display: "inline-flex", border: "1.5px solid #0a0a0a", borderRadius: 7, overflow: "hidden", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}
+          >
+            {["auto", "manuell"].map(m => (
+              <button key={m}
+                onClick={() => setMode(m)}
+                title={m === "auto" ? "Automatiskt balanserade byten" : "Full kontroll över placeringar"}
+                style={{
+                  background: mode === m ? "#0a0a0a" : "#ffffff",
+                  color: mode === m ? "#facc15" : "#0a0a0a",
+                  border: "none",
+                  padding: "5px 10px",
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                  transition: "background 0.15s, color 0.15s",
+                }}>
+                {m}
+              </button>
+            ))}
           </div>
         </div>
         <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#525252", marginTop: 6, lineHeight: 1.6, letterSpacing: "0.02em" }}>
