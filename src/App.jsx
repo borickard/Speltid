@@ -4,6 +4,7 @@ import {
   Play, Pause, RotateCcw, RefreshCw, SkipBack, SkipForward,
   ArrowUpDown, AlertTriangle, Link2, X, Check,
   Users, ClipboardList, Pencil, ChevronRight, ChevronUp, ChevronDown,
+  UserMinus, UserPlus,
 } from "lucide-react";
 
 /* Look up a player's position inside a lineup (one segment). Returns the
@@ -411,6 +412,35 @@ const beep = (freqs, dur, gap) => {
 const playSwitchSound  = () => beep([880, 880], 0.12, 0.1);
 const playPeriodEnd    = () => beep([660, 660, 660], 0.25, 0.15);
 
+/* Browser Notification helper — fires an OS-level notification if the
+   user has granted permission. Kept silent (silent:true) because our
+   own beep already plays, and the two overlap otherwise. */
+const notify = (title, body) => {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    new Notification(title, {
+      body,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: "speltid",
+      renotify: true,
+      silent: true,
+      lang: "sv",
+    });
+  } catch {}
+};
+/* Ask for notification permission. Must be called in direct response to
+   a user gesture (tap) or browsers deny silently. */
+const requestNotifPermission = () => {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  } catch {}
+};
+
 /* ─── Main App ─── */
 export default function App() {
   const [tab, setTab]         = useState(initFromURL ? "plan" : "players");
@@ -446,6 +476,12 @@ export default function App() {
      only when the user confirms (check button or Enter), so an edit can
      be undone with the cancel button or Escape. */
   const [draftName, setDraftName] = useState("");
+  /* Inline "+ lägg till spelare"-affordance inside Matchplan — a late
+     arrival shows up in every upcoming period's bench row the moment
+     the roster grows, so the coach can swap them in without leaving
+     the match view. */
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddName, setQuickAddName] = useState("");
   useEffect(() => {
     if (!sel) return;
     const p = players.find(x => x.id === sel.id);
@@ -713,10 +749,12 @@ export default function App() {
     if (currentSeg > lastSegmentBeeped.current && currentSeg < segCount && timerElapsed < pSecs) {
       lastSegmentBeeped.current = currentSeg;
       playSwitchSound();
+      notify("Byte nu!", `Period ${timerPeriod + 1} · segment ${currentSeg + 1}`);
     }
     if (timerElapsed >= pSecs && !endSounded.current) {
       endSounded.current = true;
       playPeriodEnd();
+      notify("Period slut", `Period ${timerPeriod + 1} klar`);
     }
   }, [timerElapsed, timerRunning, settings]);
 
@@ -1050,6 +1088,88 @@ export default function App() {
     swapAnimTimer.current = setTimeout(() => setSwapAnim(null), 900);
     setSel(null);
   }, [sel]);
+
+  /* Take a player out of the match — injury, parent pickup, whatever.
+     Mark them disabled so Spelare-vyn + the roster filter treat them as
+     out, AND patch every current/upcoming lineup slot they occupied
+     with the best available bench substitute. Historical periods
+     (before timerPeriod) are left intact unless the match hasn't
+     started, so a mid-match removal doesn't rewrite what already
+     happened on the field. */
+  const removeFromMatch = (removedId) => {
+    setSel(null);
+    if (!plan) {
+      setPlayers(ps => ps.map(p => p.id === removedId ? { ...p, enabled: false } : p));
+      return;
+    }
+    const startFrom = (timerElapsed === 0 && timerPeriod === 0) ? 0 : timerPeriod;
+    const minsSnap = { ...mins };
+    setPlan(prev => prev.map((period, pi) => {
+      if (pi < startFrom) return period;
+      let gk = period.gk;
+      const segs = period.lineups.map(l => ({
+        att: [...l.att],
+        mid: [...(l.mid ?? [])],
+        def: [...l.def],
+      }));
+
+      /* Replace GK: prefer a GK-flagged player, else any active player
+         not already on the field in the first segment. */
+      if (gk === removedId) {
+        const onFirst = new Set([...segs[0].att, ...segs[0].mid, ...segs[0].def]);
+        const candidates = players
+          .filter(p => p.id !== removedId && p.enabled !== false && !onFirst.has(p.id))
+          .sort((a, b) => {
+            if (a.isGK !== b.isGK) return a.isGK ? -1 : 1;
+            return (minsSnap[a.id] ?? 0) - (minsSnap[b.id] ?? 0);
+          });
+        gk = candidates[0]?.id ?? null;
+      }
+
+      /* Replace every outfield occurrence segment-by-segment, picking
+         the bench player of that segment with the lowest cumulative
+         minutes. */
+      segs.forEach(seg => {
+        ["att", "mid", "def"].forEach(role => {
+          seg[role].forEach((id, idx) => {
+            if (id !== removedId) return;
+            const onField = new Set([...seg.att, ...seg.mid, ...seg.def, gk].filter(Boolean));
+            const candidates = players
+              .filter(p => p.id !== removedId && p.enabled !== false && !onField.has(p.id))
+              .sort((a, b) => (minsSnap[a.id] ?? 0) - (minsSnap[b.id] ?? 0));
+            seg[role][idx] = candidates[0]?.id ?? null;
+          });
+        });
+      });
+
+      return {
+        gk,
+        lineups: segs.map(s => ({ att: s.att, mid: s.mid, def: s.def })),
+        bench: (period.bench ?? []).filter(id => id !== removedId),
+      };
+    }));
+    setPlayers(ps => ps.map(p => p.id === removedId ? { ...p, enabled: false } : p));
+  };
+
+  /* Put a previously-removed player back into the squad. Doesn't touch
+     the plan — they'll show up in bench rows automatically through
+     activePlayers, and the coach can swap them in by tap. */
+  const bringBackToMatch = (id) => {
+    setPlayers(ps => ps.map(p => p.id === id ? { ...p, enabled: true } : p));
+  };
+
+  /* Quick-add for a late arrival from inside the match view. The new
+     player enters bench rows via activePlayers; the coach can swap
+     them onto the field with the ordinary chip-tap flow. */
+  const commitQuickAdd = () => {
+    const name = quickAddName.trim();
+    setPlayers(ps => {
+      bumpUid(ps);
+      return [...ps, mkP(name || `Spelare ${ps.length + 1}`)];
+    });
+    setQuickAddName("");
+    setQuickAddOpen(false);
+  };
 
   /* Minute totals from current plan */
   const calcMins = () => {
@@ -1938,6 +2058,27 @@ export default function App() {
                       <span style={{ flexShrink: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.02em" }}>
                         P{sel.periodIdx + 1} · byt mot annan
                       </span>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (!selP) return;
+                          if (window.confirm(`Ta bort ${displayName(selP)} ur matchen? De ersätts automatiskt i kommande byten.`)) {
+                            removeFromMatch(sel.id);
+                          }
+                        }}
+                        title="Ta bort spelaren ur matchen"
+                        aria-label="Ta bort ur matchen"
+                        style={{
+                          background: "#fee2e2", color: "#991b1b",
+                          border: "1.5px solid #991b1b",
+                          borderRadius: 6, padding: "4px 8px",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          cursor: "pointer", flexShrink: 0,
+                          fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+                          letterSpacing: "0.02em",
+                        }}>
+                        <UserMinus size={13} /> Ta bort
+                      </button>
                       <X size={16} style={{ flexShrink: 0 }} aria-label="Avmarkera" />
                     </>
                   )}
@@ -1991,7 +2132,7 @@ export default function App() {
                             style={{ background: "rgba(10,10,10,0.1)", color: "#0a0a0a", border: "none", borderRadius: 7, padding: "7px 10px", cursor: "pointer", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                             <Users size={14} />
                           </button>
-                          <button onClick={() => setTimerRunning(r => !r)}
+                          <button onClick={() => { if (!timerRunning) requestNotifPermission(); setTimerRunning(r => !r); }}
                             style={{ background: "#0a0a0a", color: "#facc15", border: "none", borderRadius: 7, padding: "9px 14px", cursor: "pointer", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700, touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}>
                             {timerRunning ? <Pause size={16} /> : <Play size={16} />}
                           </button>
@@ -2120,7 +2261,7 @@ export default function App() {
                         </button>
                         <button onClick={() => seekTimer(timerElapsed - 15)}
                           style={{ ...dimBtn, flex: 1, padding: "9px 0", fontSize: 12 }}>−15s</button>
-                        <button onClick={() => setTimerRunning(r => !r)}
+                        <button onClick={() => { if (!timerRunning) requestNotifPermission(); setTimerRunning(r => !r); }}
                           style={{ ...primBtn, flex: 2, padding: "11px 0", fontSize: 14, gap: 5, touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}>
                           {timerRunning ? <><Pause size={14} /> Pausa</> : <><Play size={14} /> {timerElapsed > 0 ? "Fortsätt" : "Starta"}</>}
                         </button>
@@ -2190,6 +2331,49 @@ export default function App() {
 
             {/* Period cards */}
             <div>
+
+            {/* Late-arrival shortcut — a new chip joins every upcoming
+                period's bench row the moment the roster grows, so the
+                coach can swap them onto the field with the ordinary
+                tap flow. */}
+            <div style={{ marginBottom: 12 }}>
+              {quickAddOpen ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    autoFocus
+                    value={quickAddName}
+                    onChange={e => setQuickAddName(e.target.value)}
+                    onKeyDown={e => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") commitQuickAdd();
+                      if (e.key === "Escape") { setQuickAddName(""); setQuickAddOpen(false); }
+                    }}
+                    placeholder="Spelarens namn (valfritt)"
+                    style={{
+                      flex: 1, background: "#ffffff", border: "1.5px solid #0a0a0a",
+                      color: "#0a0a0a", borderRadius: 7, padding: "8px 11px", fontSize: 14, outline: "none",
+                    }}
+                  />
+                  <button onClick={commitQuickAdd}
+                    style={{ ...S.btn("primary"), padding: "8px 14px", fontSize: 13 }}>
+                    <Check size={14} /> Lägg till
+                  </button>
+                  <button onClick={() => { setQuickAddName(""); setQuickAddOpen(false); }}
+                    style={{ ...S.btn("secondary"), padding: "8px 12px", fontSize: 13 }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setQuickAddOpen(true)}
+                  style={{
+                    ...S.btn("secondary"), width: "100%", padding: "8px 0",
+                    fontSize: 13, borderStyle: "dashed", color: "#525252",
+                  }}>
+                  <UserPlus size={14} /> Lägg till spelare i matchen
+                </button>
+              )}
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: isDesktop ? 24 : 0 }}>
               {plan.map((period, i) => {
                 const pSecs = settings.duration * 60;
@@ -2343,6 +2527,53 @@ export default function App() {
                 );
               })}
             </div>
+
+            {/* Players taken out of the match — shown below the period
+                cards so coaches can pull them back in with one tap. */}
+            {(() => {
+              const removed = players.filter(p => p.enabled === false);
+              if (removed.length === 0) return null;
+              return (
+                <div style={{
+                  marginTop: 16, padding: "10px 12px",
+                  background: "#fef2f2", border: "2px dashed #991b1b",
+                  borderRadius: 10,
+                }}>
+                  <div style={{
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                    textTransform: "uppercase", letterSpacing: "0.08em",
+                    color: "#991b1b", fontWeight: 700, marginBottom: 8,
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                    <UserMinus size={12} /> Ur matchen · {removed.length} st
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {removed.map(p => (
+                      <button key={p.id}
+                        onClick={() => bringBackToMatch(p.id)}
+                        title="Återta i matchen"
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                          background: "#ffffff", color: "#0a0a0a",
+                          border: "1.5px solid #0a0a0a", borderRadius: 999,
+                          padding: "4px 11px 4px 12px",
+                          fontFamily: "inherit", fontSize: 13, fontWeight: 600,
+                          cursor: "pointer",
+                        }}>
+                        <span>{displayName(p)}</span>
+                        <span style={{
+                          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700,
+                          background: "#facc15", color: "#0a0a0a",
+                          padding: "1px 6px", borderRadius: 3, border: "1px solid #0a0a0a",
+                          letterSpacing: "0.03em",
+                        }}>+ ÅTERTA</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             </div>
 
             {/* ─── Right column: Playing time summary ─── */}
