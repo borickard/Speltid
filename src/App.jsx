@@ -6,6 +6,25 @@ import {
   Users, ClipboardList, Pencil, ChevronRight, ChevronUp, ChevronDown,
 } from "lucide-react";
 
+/* Look up a player's position inside a lineup (one segment). Returns the
+   zone role, slot index and the short zone label, or null if the player
+   isn't on the field in that segment (= they're on the bench). Used to
+   diff two segments so a slot can tell whether its previous occupant
+   went to the bench or moved to another zone. */
+const findInLineup = (lineup, playerId) => {
+  if (!playerId || !lineup) return null;
+  const att = lineup.att ?? [];
+  const mid = lineup.mid ?? [];
+  const def = lineup.def ?? [];
+  const i = att.indexOf(playerId);
+  if (i >= 0) return { role: "att", idx: i, label: "ANF" };
+  const j = mid.indexOf(playerId);
+  if (j >= 0) return { role: "mid", idx: j, label: "MF" };
+  const k = def.indexOf(playerId);
+  if (k >= 0) return { role: "def", idx: k, label: "FÖR" };
+  return null;
+};
+
 /* ─── ID factory ─── */
 let _uid = 100;
 const uid = () => ++_uid;
@@ -1182,6 +1201,12 @@ export default function App() {
     const mid = lineups[0].mid ?? [];
     const def = lineups[0].def;
     const slotIds = (role, j) => Array.from({ length: segCount }, (_, k) => (lineups[k][role] ?? [])[j] ?? null);
+    /* Snapshot both segments as full lineups so each PositionSlot can
+       diff them and tell whether its previous occupant went to the bench
+       (strikethrough ghost) or moved into another zone (ghost + "→ ZONE"
+       badge). */
+    const curLineup = lineups[selectedSegmentIdx] ?? null;
+    const prevLineup = prevSegmentIdx != null ? (lineups[prevSegmentIdx] ?? null) : null;
     return (
       <div style={{
         background: "#ffffff",
@@ -1190,15 +1215,15 @@ export default function App() {
         {showPositions ? (
           <>
             <ZoneRow label="Anfall">
-              {att.map((_, j) => <PositionSlot key={j} ids={slotIds("att", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} />)}
+              {att.map((_, j) => <PositionSlot key={j} ids={slotIds("att", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />)}
             </ZoneRow>
             {fmt.mid > 0 && (
               <ZoneRow label="Mittfält">
-                {mid.map((_, j) => <PositionSlot key={j} ids={slotIds("mid", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} />)}
+                {mid.map((_, j) => <PositionSlot key={j} ids={slotIds("mid", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />)}
               </ZoneRow>
             )}
             <ZoneRow label="Försvar">
-              {def.map((_, j) => <PositionSlot key={j} ids={slotIds("def", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} />)}
+              {def.map((_, j) => <PositionSlot key={j} ids={slotIds("def", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />)}
             </ZoneRow>
           </>
         ) : (
@@ -1211,7 +1236,7 @@ export default function App() {
                   const all = [...seg.att, ...(seg.mid ?? []), ...seg.def];
                   return all[j] ?? null;
                 });
-                return <PositionSlot key={j} ids={idsAcross} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} />;
+                return <PositionSlot key={j} ids={idsAcross} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />;
               })}
             </div>
           </div>
@@ -1244,11 +1269,16 @@ export default function App() {
      border/tint = "just left". Outside the switch window prevSegmentIdx is
      null and we just show the selected segment's chip plainly, so previewing
      other segments via the header tabs reads as a clean lineup. */
-  const PositionSlot = ({ ids, label, periodIdx, selectedSegmentIdx, prevSegmentIdx, isGKSlot }) => {
+  const PositionSlot = ({ ids, label, periodIdx, selectedSegmentIdx, prevSegmentIdx, isGKSlot, prevLineup, curLineup }) => {
     const isGKLabel = isGKSlot || label === "Målvakt";
     const curId = ids[selectedSegmentIdx] ?? null;
     const prevId = prevSegmentIdx != null ? (ids[prevSegmentIdx] ?? null) : null;
     const justChanged = prevId != null && prevId !== curId;
+    /* Diff the two segments so this slot can tell whether its previous
+       occupant left the pitch (ghost chip gets strikethrough) or just
+       moved into a different zone (ghost chip stays plain with a
+       "→ ZONE" badge pointing to where they are now). */
+    const prevInCurrent = justChanged && prevLineup && curLineup ? findInLineup(curLineup, prevId) : null;
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto", minWidth: 0, overflow: "visible" }}>
         {label && (
@@ -1261,38 +1291,44 @@ export default function App() {
           : <div style={{ background: "#ffffff", border: "1.5px dashed #0a0a0a", borderRadius: 999, padding: "3px 10px", fontSize: 12, color: "#a3a3a3", display: "inline-block" }}>—</div>
         }
         {justChanged && prevId && (() => {
-          /* Variant B — show the outgoing player as a strikethrough name
-             below the new pill instead of a full red chip. Still tappable
-             so the coach can override the swap manually. */
+          /* Ghost chip: dashed outline + reduced opacity to read as
+             "previously here". Still tappable so the coach can override. */
           const prevP = getP(prevId);
           if (!prevP || prevP.enabled === false) return null;
           const prevIsSelected = sel?.id === prevId;
+          const goingToBench = !prevInCurrent;
           return (
             <div
               onClick={e => { e.stopPropagation(); tapPlayer(prevId, periodIdx); }}
-              title="Tryck för att byta plats manuellt"
+              title={goingToBench ? "Lämnar planen — tryck för att byta manuellt" : `Flyttar till ${prevInCurrent.label} — tryck för att byta`}
               style={{
-                marginTop: 4,
-                display: "inline-flex", alignItems: "center", gap: 4,
+                marginTop: 5,
+                display: "inline-flex", alignItems: "center", gap: 5,
+                background: "#ffffff",
+                border: `1.5px dashed ${goingToBench ? "#dc2626" : "#737373"}`,
+                borderRadius: 999,
+                padding: "3px 10px",
                 fontFamily: "'Space Grotesk', system-ui, sans-serif",
-                fontSize: 13, fontWeight: 600,
-                color: "#991b1b",
-                padding: "1px 6px",
-                borderRadius: 5,
+                fontSize: 12, fontWeight: 600,
+                color: goingToBench ? "#991b1b" : "#525252",
+                opacity: 0.7,
                 cursor: "pointer",
                 boxShadow: prevIsSelected ? "0 0 0 2.5px #facc15, 0 0 0 4px #0a0a0a" : "none",
                 userSelect: "none", WebkitUserSelect: "none",
               }}
             >
               {prevP.isGK && isGKLabel && (
-                <span style={{ fontSize: 10, color: "#991b1b", opacity: 0.75, textDecoration: "none" }}>mv</span>
+                <span style={{ fontSize: 10, opacity: 0.75, textDecoration: "none" }}>mv</span>
               )}
               <span style={{
-                textDecoration: "line-through",
-                textDecorationColor: "#dc2626",
-                textDecorationThickness: "2px",
+                textDecoration: goingToBench ? "line-through" : "none",
+                textDecorationColor: goingToBench ? "#dc2626" : undefined,
+                textDecorationThickness: goingToBench ? "2px" : undefined,
                 textDecorationSkipInk: "none",
               }}>{displayName(prevP)}</span>
+              {prevInCurrent && (
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#0a0a0a", fontWeight: 700, letterSpacing: "0.05em", background: "#facc15", padding: "1px 5px", borderRadius: 3, border: "1px solid #0a0a0a" }}>→ {prevInCurrent.label}</span>
+              )}
             </div>
           );
         })()}
