@@ -1250,7 +1250,7 @@ export default function App() {
     const prevId = prevSegmentIdx != null ? (ids[prevSegmentIdx] ?? null) : null;
     const justChanged = prevId != null && prevId !== curId;
     return (
-      <div style={{ textAlign: "left", flex: "0 0 auto", minWidth: 0, overflow: "visible" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto", minWidth: 0, overflow: "visible" }}>
         {label && (
           <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#525252", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5, fontWeight: 700 }}>
             {label}
