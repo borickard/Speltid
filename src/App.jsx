@@ -477,6 +477,26 @@ export default function App() {
   const endSounded      = useRef(false);
   const startedAtRef    = useRef(null); // wall-clock timestamp at last resume
   const baseElapsedRef  = useRef(0);    // elapsed seconds at last resume
+  /* Pause-elapsed counter — starts ticking up the moment the coach pauses
+     mid-match so halftime breaks have a visible clock. Resets every time
+     the timer starts running again. */
+  const pausedAtRef = useRef(null);
+  const [pauseElapsed, setPauseElapsed] = useState(0);
+  useEffect(() => {
+    if (timerRunning) {
+      pausedAtRef.current = null;
+      setPauseElapsed(0);
+      return;
+    }
+    if (timerElapsed <= 0) { pausedAtRef.current = null; return; }
+    pausedAtRef.current = Date.now();
+    setPauseElapsed(0);
+    const h = setInterval(() => {
+      if (pausedAtRef.current) setPauseElapsed(Math.floor((Date.now() - pausedAtRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerRunning]);
   const wakeLockRef     = useRef(null);
   const dragIdx         = useRef(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
@@ -1893,6 +1913,11 @@ export default function App() {
                           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 32, letterSpacing: "-0.04em", color: timeColor, lineHeight: 1, flex: 1 }}>
                             {fmtTime(timerElapsed)}
                           </span>
+                          {!timerRunning && timerElapsed > 0 && (
+                            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, color: "#0a0a0a", letterSpacing: "0.05em", flexShrink: 0 }}>
+                              PAUS {fmtTime(pauseElapsed)}
+                            </span>
+                          )}
                           {isSwitchDue && !isOvertime && <ArrowUpDown size={15} color="#0a0a0a" style={{ flexShrink: 0 }} />}
                           {isOvertime && <AlertTriangle size={15} color="#991b1b" style={{ flexShrink: 0 }} />}
                           <button onClick={() => { setTab("players"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
@@ -1901,8 +1926,8 @@ export default function App() {
                             <Users size={14} />
                           </button>
                           <button onClick={() => setTimerRunning(r => !r)}
-                            style={{ background: "#0a0a0a", color: "#facc15", border: "none", borderRadius: 7, padding: "7px 12px", cursor: "pointer", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
-                            {timerRunning ? <Pause size={14} /> : <Play size={14} />}
+                            style={{ background: "#0a0a0a", color: "#facc15", border: "none", borderRadius: 7, padding: "9px 14px", cursor: "pointer", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700, touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}>
+                            {timerRunning ? <Pause size={16} /> : <Play size={16} />}
                           </button>
                         </div>
                         <div
@@ -1941,7 +1966,10 @@ export default function App() {
                   <div style={{ padding: "14px 16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#713f12", fontWeight: 500 }}>Period {clampedPeriod + 1} / {plan.length}</div>
-                    {isSwitchDue && !isOvertime && (
+                    {!timerRunning && timerElapsed > 0 && (
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#0a0a0a", fontWeight: 700, letterSpacing: "0.05em" }}>PAUS {fmtTime(pauseElapsed)}</div>
+                    )}
+                    {timerRunning && isSwitchDue && !isOvertime && (
                       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#0a0a0a", fontWeight: 700, letterSpacing: "0.05em" }}>BYTE NU</div>
                     )}
                   </div>
@@ -2027,7 +2055,7 @@ export default function App() {
                         <button onClick={() => seekTimer(timerElapsed - 15)}
                           style={{ ...dimBtn, flex: 1, padding: "9px 0", fontSize: 12 }}>−15s</button>
                         <button onClick={() => setTimerRunning(r => !r)}
-                          style={{ ...primBtn, flex: 2, padding: "9px 0", fontSize: 14, gap: 5 }}>
+                          style={{ ...primBtn, flex: 2, padding: "11px 0", fontSize: 14, gap: 5, touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}>
                           {timerRunning ? <><Pause size={14} /> Pausa</> : <><Play size={14} /> {timerElapsed > 0 ? "Fortsätt" : "Starta"}</>}
                         </button>
                         <button onClick={() => seekTimer(timerElapsed + 15)}
