@@ -1223,7 +1223,7 @@ export default function App() {
               fontSize: 11, color: "#525252", fontWeight: 700,
               letterSpacing: "0.06em", minWidth: 42, flexShrink: 0,
             }}>MV</div>
-            <div style={{ display: "flex", gap: 8, flex: 1 }}>
+            <div style={{ display: "flex", gap: 8, flex: 1, justifyContent: "center" }}>
               <PositionSlot ids={[gk]} label="" periodIdx={periodIdx} selectedSegmentIdx={0} isGKSlot />
             </div>
           </div>
@@ -2286,16 +2286,28 @@ export default function App() {
                 <div style={{ fontFamily: "'Space Grotesk'", fontSize: 20, letterSpacing: 2, color: "#737373" }}>
                   Speltid — {totalPossible} min totalt
                 </div>
-                <button onClick={doShuffle} title={settings.positions !== false ? "Slumpa positionerna" : "Slumpa spelrotationen"}
-                  style={{
-                    ...S.btn("secondary"),
-                    padding: "6px 10px", fontSize: 12, flexShrink: 0,
-                    background: justShuffled ? "#facc15" : "#ffffff",
-                    color: "#0a0a0a",
-                    transition: "background 0.2s",
-                  }}>
-                  <Shuffle size={13} /> {justShuffled ? "Slumpat!" : "Slumpa"}
-                </button>
+                {mode === "auto" ? (
+                  <button onClick={doShuffle} title={settings.positions !== false ? "Slumpa positionerna" : "Slumpa spelrotationen"}
+                    style={{
+                      ...S.btn("secondary"),
+                      padding: "6px 10px", fontSize: 12, flexShrink: 0,
+                      background: justShuffled ? "#facc15" : "#ffffff",
+                      color: "#0a0a0a",
+                      transition: "background 0.2s",
+                    }}>
+                    <Shuffle size={13} /> {justShuffled ? "Slumpat!" : "Slumpa"}
+                  </button>
+                ) : (
+                  originalPlan && (
+                    <button onClick={doReset} title="Återställ planen till algoritmens ursprungliga förslag"
+                      style={{
+                        ...S.btn("secondary"),
+                        padding: "6px 10px", fontSize: 12, flexShrink: 0,
+                      }}>
+                      <RotateCcw size={13} /> Återställ
+                    </button>
+                  )
+                )}
               </div>
               {[...activePlayers]
                 .sort((a, b) => (mins[b.id] ?? 0) - (mins[a.id] ?? 0))
@@ -2399,7 +2411,7 @@ export default function App() {
                   }}>
                     {fair
                       ? <><Check size={12} /> Speltiden är jämnt fördelad</>
-                      : <><AlertTriangle size={12} /> Spelartid skiljer {Math.round(spread)} min — Slumpa för bättre balans</>
+                      : <><AlertTriangle size={12} /> Spelartid skiljer {Math.round(spread)} min{mode === "auto" ? " — Slumpa för bättre balans" : ""}</>
                     }
                   </div>
                 );
