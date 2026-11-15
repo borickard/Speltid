@@ -26,9 +26,10 @@ const PM = Object.fromEntries(PREFS.map(p => [p.key, p]));
 
 const FORMATS = [
   { key: "3v3",   label: "3v3",   hasGK: false, total: 3,
+    /* Names read def–att (bakåtlinje–frontlinje). 1-2 = 1 back + 2 fram. */
     formations: [
-      { name: "1-2",     def: 2, mid: 0, att: 1 },
-      { name: "2-1",     def: 1, mid: 0, att: 2 },
+      { name: "1-2",     def: 1, mid: 0, att: 2 },
+      { name: "2-1",     def: 2, mid: 0, att: 1 },
     ],
   },
   { key: "5v5",   label: "5v5",   hasGK: true,  total: 5,
@@ -37,6 +38,8 @@ const FORMATS = [
       { name: "1-2-1",   def: 1, mid: 2, att: 1 },
       { name: "2-1-1",   def: 2, mid: 1, att: 1 },
       { name: "1-1-2",   def: 1, mid: 1, att: 2 },
+      { name: "1-3",     def: 1, mid: 0, att: 3 },
+      { name: "3-1",     def: 3, mid: 0, att: 1 },
     ],
   },
   { key: "7v7",   label: "7v7",   hasGK: true,  total: 7,
@@ -45,6 +48,9 @@ const FORMATS = [
       { name: "3-2-1",   def: 3, mid: 2, att: 1 },
       { name: "2-3-1",   def: 2, mid: 3, att: 1 },
       { name: "1-3-2",   def: 1, mid: 3, att: 2 },
+      { name: "3-1-2",   def: 3, mid: 1, att: 2 },
+      { name: "2-1-3",   def: 2, mid: 1, att: 3 },
+      { name: "1-2-3",   def: 1, mid: 2, att: 3 },
     ],
   },
 ];
@@ -1134,7 +1140,7 @@ export default function App() {
         </div>
         <div style={{
           flex: 1, minWidth: 0,
-          display: "flex", flexWrap: "wrap", justifyContent: "flex-start",
+          display: "flex", flexWrap: "wrap", justifyContent: "center",
           gap: 8, rowGap: 8, alignItems: "flex-start",
         }}>
           {children}
