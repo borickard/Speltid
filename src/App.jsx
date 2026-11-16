@@ -158,7 +158,7 @@ const initFromURL = (() => {
 bumpUid(initFromURL?.players);
 
 /* ─── Auto-generate algorithm ─── */
-function generatePlan(players, settings, perPeriodFormations = {}) {
+function generatePlan(players, settings, perPeriodFormations = {}, gkOverridesByPeriod = {}) {
   const { periods, duration, subs } = settings;
   const fmtBase = getFmt(settings);
   const FULL = duration;
@@ -285,9 +285,18 @@ function generatePlan(players, settings, perPeriodFormations = {}) {
 
     let gkId = null;
     if (fmt.hasGK) {
-      gkId = gks.length > 0
-        ? gks[i % gks.length].id
-        : [...players].sort((a, b) => mins[b.id] - mins[a.id])[0].id;
+      /* GK override wins over the natural rotation — the coach's own
+         pick for this period, regardless of isGK flag. Any player on
+         the roster can be chosen; non-GK volunteers are legal in
+         youth football. */
+      const override = gkOverridesByPeriod[i];
+      if (override != null && players.some(p => p.id === override)) {
+        gkId = override;
+      } else {
+        gkId = gks.length > 0
+          ? gks[i % gks.length].id
+          : [...players].sort((a, b) => mins[b.id] - mins[a.id])[0].id;
+      }
     }
 
     /* avail = outfield candidates for this period.
@@ -486,10 +495,16 @@ export default function App() {
      clears these; the coach picks overrides from the period header
      during the match. */
   const [perPeriodFormations, setPerPeriodFormations] = useState({});
+  /* Per-period MV overrides. {periodIdx: playerId} — any period not
+     in the map uses the auto rotation (sorted isGK players, keyed by
+     shuffleSalt). Cleared on every fresh Generera. */
+  const [gkOverridesByPeriod, setGkOverridesByPeriod] = useState({});
   const [plan, setPlan]         = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
   const [originalPlan, setOriginalPlan] = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
   /* Which period's formation picker is currently open (null = closed). */
   const [formationPicker, setFormationPicker] = useState(null);
+  /* Which period's GK picker is currently open (null = closed). */
+  const [gkPicker, setGkPicker] = useState(null);
   const [sel, setSel]           = useState(null);
   /* Draft name while a chip is marked. Writes to the real player state
      only when the user confirms (check button or Enter), so an edit can
@@ -902,6 +917,7 @@ export default function App() {
     /* Fresh plan wipes any lingering per-period overrides — the coach
        starts from a clean baseline. */
     setPerPeriodFormations({});
+    setGkOverridesByPeriod({});
     const newPlan = generatePlan(named, settings);
     setPlan(newPlan);
     setOriginalPlan(newPlan);
@@ -956,7 +972,7 @@ export default function App() {
        and the user sees the Slumpat! flash without a visible change. */
     for (let attempt = 0; attempt < 8; attempt++) {
       salt += 1;
-      next = generatePlan(activePlayers, { ...settings, shuffleSalt: salt }, perPeriodFormations);
+      next = generatePlan(activePlayers, { ...settings, shuffleSalt: salt }, perPeriodFormations, gkOverridesByPeriod);
       if (!plansEqual(plan, next)) break;
     }
     setSettings(s => ({ ...s, shuffleSalt: salt }));
@@ -974,11 +990,35 @@ export default function App() {
   const setPeriodFormation = (periodIdx, formationName) => {
     const nextOverrides = { ...perPeriodFormations, [periodIdx]: formationName };
     setPerPeriodFormations(nextOverrides);
-    const nextPlan = generatePlan(activePlayers, settings, nextOverrides);
+    const nextPlan = generatePlan(activePlayers, settings, nextOverrides, gkOverridesByPeriod);
     setPlan(nextPlan);
     setOriginalPlan(nextPlan);
     setSel(null);
     setFormationPicker(null);
+  };
+
+  /* Set the goalkeeper for one period and rebuild. The outfield
+     assignment recomputes because the override has to leave the avail
+     pool for that period; everyone else slots in around it. */
+  const setPeriodGK = (periodIdx, playerId) => {
+    const nextOverrides = { ...gkOverridesByPeriod, [periodIdx]: playerId };
+    setGkOverridesByPeriod(nextOverrides);
+    const nextPlan = generatePlan(activePlayers, settings, perPeriodFormations, nextOverrides);
+    setPlan(nextPlan);
+    setOriginalPlan(nextPlan);
+    setSel(null);
+    setGkPicker(null);
+  };
+
+  const clearPeriodGK = (periodIdx) => {
+    const next = { ...gkOverridesByPeriod };
+    delete next[periodIdx];
+    setGkOverridesByPeriod(next);
+    const nextPlan = generatePlan(activePlayers, settings, perPeriodFormations, next);
+    setPlan(nextPlan);
+    setOriginalPlan(nextPlan);
+    setSel(null);
+    setGkPicker(null);
   };
 
   const resetAll = () => {
@@ -989,6 +1029,7 @@ export default function App() {
     setHomeScore(0); setAwayScore(0);
     setPlan(null); setOriginalPlan(null);
     setPerPeriodFormations({});
+    setGkOverridesByPeriod({});
     setSel(null);
     setTab("players");
     setTimerRunning(false); setTimerElapsed(0); setTimerPeriod(0);
@@ -1398,18 +1439,30 @@ export default function App() {
             </div>
           </div>
         )}
-        {fmt.hasGK && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 2px", marginTop: 2 }}>
-            <div style={{
-              fontFamily: "'Space Grotesk', system-ui, sans-serif",
-              fontSize: 11, color: "#525252", fontWeight: 700,
-              letterSpacing: "0.06em", minWidth: 42, flexShrink: 0,
-            }}>MV</div>
-            <div style={{ display: "flex", gap: 8, flex: 1, justifyContent: "center" }}>
-              <PositionSlot ids={[gk]} label="" periodIdx={periodIdx} selectedSegmentIdx={0} isGKSlot />
+        {fmt.hasGK && (() => {
+          const hasGKOverride = gkOverridesByPeriod[periodIdx] != null;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 2px", marginTop: 2 }}>
+              <button
+                onClick={e => { e.stopPropagation(); setGkPicker(periodIdx); }}
+                title="Byt målvakt för denna period"
+                style={{
+                  fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                  fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+                  background: hasGKOverride ? "#facc15" : "#ffffff",
+                  color: "#0a0a0a", border: "1.5px solid #0a0a0a",
+                  borderRadius: 4, padding: "3px 8px",
+                  cursor: "pointer", flexShrink: 0,
+                  display: "inline-flex", alignItems: "center", gap: 3,
+                }}>
+                MV <ChevronDown size={10} />
+              </button>
+              <div style={{ display: "flex", gap: 8, flex: 1, justifyContent: "center" }}>
+                <PositionSlot ids={[gk]} label="" periodIdx={periodIdx} selectedSegmentIdx={0} isGKSlot />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     );
   };
@@ -2107,6 +2160,96 @@ export default function App() {
                     )}
                     <div style={{ fontSize: 11, color: "#737373", marginTop: 10, lineHeight: 1.5 }}>
                       Att byta formation för en period räknar om spelartiden så att alla positioner fylls enligt den nya uppställningen. Manuella byten i andra perioder tappas inte men i den här periodens kan en del byten återställas.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* GK-picker — bottom sheet listing every active player
+                (isGK-flagged ones first). A pick regenerates the plan
+                with the override; Återställ-knappen släpper den och
+                lämnar rotationen till algoritmen igen. */}
+            {gkPicker != null && (() => {
+              const currentGK = plan[gkPicker]?.gk ?? null;
+              const override = gkOverridesByPeriod[gkPicker];
+              const candidates = [...players]
+                .filter(p => p.enabled !== false)
+                .sort((a, b) => {
+                  if (!!a.isGK !== !!b.isGK) return a.isGK ? -1 : 1;
+                  return players.indexOf(a) - players.indexOf(b);
+                });
+              return (
+                <div
+                  onClick={() => setGkPicker(null)}
+                  style={{
+                    position: "fixed", inset: 0, zIndex: 150,
+                    background: "rgba(10,10,10,0.55)",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: 12,
+                  }}>
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      width: "100%", maxWidth: 460,
+                      background: "#ffffff", color: "#0a0a0a",
+                      border: "2px solid #0a0a0a", borderRadius: 14,
+                      padding: "16px 16px 20px",
+                      boxSizing: "border-box",
+                      maxHeight: "80vh", display: "flex", flexDirection: "column",
+                    }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#525252", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
+                          Period {gkPicker + 1} · målvakt
+                        </div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#0a0a0a", marginTop: 2 }}>
+                          Välj målvakt för perioden
+                        </div>
+                      </div>
+                      <button onClick={() => setGkPicker(null)}
+                        aria-label="Stäng"
+                        style={{ background: "#ffffff", border: "1.5px solid #0a0a0a", borderRadius: 6, width: 30, height: 30, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14, overflowY: "auto" }}>
+                      {candidates.map(p => {
+                        const isCurrent = currentGK === p.id;
+                        return (
+                          <button key={p.id}
+                            onClick={() => setPeriodGK(gkPicker, p.id)}
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 6,
+                              background: isCurrent ? "#facc15" : "#ffffff",
+                              color: "#0a0a0a",
+                              border: `2px solid ${p.isGK ? GK_COLOR : "#0a0a0a"}`,
+                              borderRadius: 999,
+                              padding: "6px 13px",
+                              fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                              fontSize: 14, fontWeight: 700,
+                              cursor: "pointer", flex: "0 0 auto",
+                            }}>
+                            {p.isGK && (
+                              <span style={{ fontSize: 10, background: GK_COLOR, color: "#ffffff", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>MV</span>
+                            )}
+                            <span>{displayName(p)}</span>
+                            {isCurrent && (
+                              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#525252", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600 }}>nu</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {override != null && (
+                      <button
+                        onClick={() => clearPeriodGK(gkPicker)}
+                        style={{ ...S.btn("secondary"), width: "100%", padding: "9px 0", fontSize: 13 }}>
+                        <RotateCcw size={13} /> Återställ till automatisk rotation
+                      </button>
+                    )}
+                    <div style={{ fontSize: 11, color: "#737373", marginTop: 10, lineHeight: 1.5 }}>
+                      Spelare markerade med grönt MV är flaggade som målvakter. Alla andra kan också väljas — nya minutes räknas om så ingen hamnar efter.
                     </div>
                   </div>
                 </div>
