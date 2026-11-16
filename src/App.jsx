@@ -158,11 +158,14 @@ const initFromURL = (() => {
 bumpUid(initFromURL?.players);
 
 /* ─── Auto-generate algorithm ─── */
-function generatePlan(players, settings) {
+function generatePlan(players, settings, perPeriodFormations = {}) {
   const { periods, duration, subs } = settings;
-  const fmt = getFmt(settings);
+  const fmtBase = getFmt(settings);
   const FULL = duration;
-  const fieldCount = fmt.att + fmt.mid + fmt.def;
+  /* Field count stays constant across formations within a spelform
+     (3v3 always 3 outfield, 5v5 always 4 outfield with GK, 7v7 always
+     6 outfield with GK) so one top-level count serves every period. */
+  const fieldCount = fmtBase.att + fmtBase.mid + fmtBase.def;
   const shuffleSalt = settings.shuffleSalt ?? 0;
   /* When true, players who continue from one segment to the next within a
      period keep their position; only players coming on take the vacated
@@ -184,7 +187,7 @@ function generatePlan(players, settings) {
   /* GK rotation order is shuffleSalt-keyed so the Slumpa button rotates
      who plays in which period, not just the outfield positions. With a
      single GK marked there's nothing to shuffle. */
-  const gks = fmt.hasGK
+  const gks = fmtBase.hasGK
     ? players.filter(p => p.isGK).slice().sort((a, b) =>
         hash01(`gks|${a.id}|${shuffleSalt}`) - hash01(`gks|${b.id}|${shuffleSalt}`))
     : [];
@@ -215,9 +218,10 @@ function generatePlan(players, settings) {
   /* halfIdx is a tag for the tiebreaker so first/second halves of the same
      period don't get identical noise. prevPosByPlayer carries each player's
      role from the previous segment of this period so they can be encouraged
-     to stay put. */
-  const fillPositions = (pool, periodIdx, halfIdx, prevPosByPlayer) => {
-    const limits = { att: fmt.att, mid: fmt.mid, def: fmt.def };
+     to stay put. periodFmt is the (possibly overridden) formation for this
+     period so the period can run on a different shape than its neighbours. */
+  const fillPositions = (pool, periodIdx, halfIdx, prevPosByPlayer, periodFmt) => {
+    const limits = { att: periodFmt.att, mid: periodFmt.mid, def: periodFmt.def };
     const counts = { att: 0, mid: 0, def: 0 };
     const remaining = [...pool];
     const result = { at: [], md: [], df: [] };
@@ -248,9 +252,9 @@ function generatePlan(players, settings) {
       remaining.splice(remaining.indexOf(best.player), 1);
     }
 
-    while (result.at.length < fmt.att) result.at.push(null);
-    while (result.md.length < fmt.mid) result.md.push(null);
-    while (result.df.length < fmt.def) result.df.push(null);
+    while (result.at.length < periodFmt.att) result.at.push(null);
+    while (result.md.length < periodFmt.mid) result.md.push(null);
+    while (result.df.length < periodFmt.def) result.df.push(null);
     return result;
   };
 
@@ -271,6 +275,14 @@ function generatePlan(players, settings) {
   let lastSegmentIds = new Set();
 
   return Array.from({ length: periods }, (_, i) => {
+    /* Per-period formation override — falls back to the global
+       settings.formation when the user hasn't picked one for this
+       period. hasGK and the outfield-count total stay constant across
+       formations of the same spelform, so only the (att,mid,def)
+       distribution actually varies here. */
+    const periodFormationName = perPeriodFormations[i] ?? settings.formation ?? defaultFormationName(settings.format);
+    const fmt = getFmt({ ...settings, formation: periodFormationName });
+
     let gkId = null;
     if (fmt.hasGK) {
       gkId = gks.length > 0
@@ -325,7 +337,7 @@ function generatePlan(players, settings) {
 
       let pos;
       if (k === 0 || !keepPositionsInPeriod || lineups.length === 0) {
-        pos = fillPositions(segPlayers, i, k, prevPosByPlayer);
+        pos = fillPositions(segPlayers, i, k, prevPosByPlayer, fmt);
       } else {
         /* Lock positions to last segment for players who continue; place
            comers into the slots vacated by players who left. */
@@ -469,8 +481,15 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem("speltid-mode-v1", mode); } catch {}
   }, [mode]);
+  /* Per-period formation overrides. {periodIdx: formationName} — any
+     period not in the map uses settings.formation. A fresh Generera
+     clears these; the coach picks overrides from the period header
+     during the match. */
+  const [perPeriodFormations, setPerPeriodFormations] = useState({});
   const [plan, setPlan]         = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
   const [originalPlan, setOriginalPlan] = useState(() => initFromURL ? generatePlan(initFromURL.players.filter(p => p.enabled !== false), initFromURL.settings) : null);
+  /* Which period's formation picker is currently open (null = closed). */
+  const [formationPicker, setFormationPicker] = useState(null);
   const [sel, setSel]           = useState(null);
   /* Draft name while a chip is marked. Writes to the real player state
      only when the user confirms (check button or Enter), so an edit can
@@ -880,6 +899,9 @@ export default function App() {
     const named = anyEmpty
       ? activePlayers.map(p => p.name?.trim() ? p : { ...p, name: `Spelare ${players.findIndex(x => x.id === p.id) + 1}` })
       : activePlayers;
+    /* Fresh plan wipes any lingering per-period overrides — the coach
+       starts from a clean baseline. */
+    setPerPeriodFormations({});
     const newPlan = generatePlan(named, settings);
     setPlan(newPlan);
     setOriginalPlan(newPlan);
@@ -934,7 +956,7 @@ export default function App() {
        and the user sees the Slumpat! flash without a visible change. */
     for (let attempt = 0; attempt < 8; attempt++) {
       salt += 1;
-      next = generatePlan(activePlayers, { ...settings, shuffleSalt: salt });
+      next = generatePlan(activePlayers, { ...settings, shuffleSalt: salt }, perPeriodFormations);
       if (!plansEqual(plan, next)) break;
     }
     setSettings(s => ({ ...s, shuffleSalt: salt }));
@@ -945,6 +967,20 @@ export default function App() {
     setTimeout(() => setJustShuffled(false), 1200);
   };
 
+  /* Set a new formation for one period and rebuild the plan. The GK
+     rotation + roster assignment are shuffleSalt-keyed so the same
+     salt reproduces compatible lineups; only the target period
+     changes shape, every other period keeps its current layout. */
+  const setPeriodFormation = (periodIdx, formationName) => {
+    const nextOverrides = { ...perPeriodFormations, [periodIdx]: formationName };
+    setPerPeriodFormations(nextOverrides);
+    const nextPlan = generatePlan(activePlayers, settings, nextOverrides);
+    setPlan(nextPlan);
+    setOriginalPlan(nextPlan);
+    setSel(null);
+    setFormationPicker(null);
+  };
+
   const resetAll = () => {
     if (!window.confirm("Återställ allt till standardvärden?")) return;
     setPlayers([...DEMO]);
@@ -952,6 +988,7 @@ export default function App() {
     setHomeTeam(""); setAwayTeam("");
     setHomeScore(0); setAwayScore(0);
     setPlan(null); setOriginalPlan(null);
+    setPerPeriodFormations({});
     setSel(null);
     setTab("players");
     setTimerRunning(false); setTimerElapsed(0); setTimerPeriod(0);
@@ -1337,7 +1374,7 @@ export default function App() {
             <ZoneRow label="Anfall">
               {att.map((_, j) => <PositionSlot key={j} ids={slotIds("att", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />)}
             </ZoneRow>
-            {fmt.mid > 0 && (
+            {mid.length > 0 && (
               <ZoneRow label="Mittfält">
                 {mid.map((_, j) => <PositionSlot key={j} ids={slotIds("mid", j)} label="" periodIdx={periodIdx} selectedSegmentIdx={selectedSegmentIdx} prevSegmentIdx={prevSegmentIdx} prevLineup={prevLineup} curLineup={curLineup} />)}
               </ZoneRow>
@@ -1976,6 +2013,106 @@ export default function App() {
 
         {tab === "plan" && plan && (
           <div>
+            {/* Formation-picker — bottom sheet listing every formation the
+                current spelform supports. A new choice regenerates the
+                whole plan with the override; "Återställ till standard"
+                drops the override and goes back to settings.formation. */}
+            {formationPicker != null && (() => {
+              const currentFmt = FM[settings.format] ?? FM["5v5"];
+              const formations = currentFmt.formations ?? [];
+              const activeOverride = perPeriodFormations[formationPicker];
+              const basePeriodName = plan[formationPicker]?.lineups?.[0]
+                ? (() => {
+                    const l0 = plan[formationPicker].lineups[0];
+                    return (l0.mid?.length ?? 0) > 0
+                      ? `${l0.def?.length ?? 0}-${l0.mid?.length ?? 0}-${l0.att?.length ?? 0}`
+                      : `${l0.def?.length ?? 0}-${l0.att?.length ?? 0}`;
+                  })()
+                : null;
+              const baselineName = settings.formation ?? defaultFormationName(settings.format);
+              return (
+                <div
+                  onClick={() => setFormationPicker(null)}
+                  style={{
+                    position: "fixed", inset: 0, zIndex: 150,
+                    background: "rgba(10,10,10,0.55)",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: 12,
+                  }}>
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      width: "100%", maxWidth: 460,
+                      background: "#ffffff", color: "#0a0a0a",
+                      border: "2px solid #0a0a0a", borderRadius: 14,
+                      padding: "16px 16px 20px",
+                      boxSizing: "border-box",
+                    }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#525252", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
+                          Period {formationPicker + 1} · formation
+                        </div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#0a0a0a", marginTop: 2 }}>
+                          Välj formation för perioden
+                        </div>
+                      </div>
+                      <button onClick={() => setFormationPicker(null)}
+                        aria-label="Stäng"
+                        style={{ background: "#ffffff", border: "1.5px solid #0a0a0a", borderRadius: 6, width: 30, height: 30, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                      {formations.map(fm => {
+                        const isActive = (activeOverride ?? baselineName) === fm.name;
+                        const isCurrent = basePeriodName === fm.name;
+                        return (
+                          <button key={fm.name}
+                            onClick={() => setPeriodFormation(formationPicker, fm.name)}
+                            style={{
+                              display: "inline-flex", flexDirection: "column", alignItems: "center",
+                              background: isActive ? "#facc15" : "#ffffff",
+                              color: "#0a0a0a",
+                              border: "2px solid #0a0a0a",
+                              borderRadius: 10,
+                              padding: "10px 14px",
+                              fontFamily: "'JetBrains Mono', monospace",
+                              fontSize: 15, fontWeight: 700, letterSpacing: "0.03em",
+                              cursor: "pointer", flex: "0 0 auto", minWidth: 68,
+                            }}>
+                            {fm.name}
+                            {fm.name === baselineName && (
+                              <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, color: "#525252", marginTop: 2, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 600 }}>
+                                {isCurrent && !activeOverride ? "standard · nu" : "standard"}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {activeOverride && (
+                      <button
+                        onClick={() => {
+                          const next = { ...perPeriodFormations };
+                          delete next[formationPicker];
+                          setPerPeriodFormations(next);
+                          const nextPlan = generatePlan(activePlayers, settings, next);
+                          setPlan(nextPlan); setOriginalPlan(nextPlan);
+                          setSel(null); setFormationPicker(null);
+                        }}
+                        style={{ ...S.btn("secondary"), width: "100%", padding: "9px 0", fontSize: 13 }}>
+                        <RotateCcw size={13} /> Återställ till standard ({baselineName})
+                      </button>
+                    )}
+                    <div style={{ fontSize: 11, color: "#737373", marginTop: 10, lineHeight: 1.5 }}>
+                      Att byta formation för en period räknar om spelartiden så att alla positioner fylls enligt den nya uppställningen. Manuella byten i andra perioder tappas inte men i den här periodens kan en del byten återställas.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {sel && (() => {
               const selP = getP(sel.id);
               const selIdx = selP ? players.findIndex(x => x.id === sel.id) : -1;
@@ -2406,6 +2543,15 @@ export default function App() {
                 ]) : null;
                 const segBench = activePlayers.filter(p => !onFieldNow.has(p.id));
                 const hasBench = segBench.length > 0;
+                /* Read the period's actual shape from its first segment,
+                   so the formation chip tracks reality even if generate
+                   fell back to a baseline formation for an uncovered
+                   override. */
+                const pL0 = period.lineups[0] ?? { att: [], mid: [], def: [] };
+                const periodFormationName = (pL0.mid?.length ?? 0) > 0
+                  ? `${pL0.def?.length ?? 0}-${pL0.mid?.length ?? 0}-${pL0.att?.length ?? 0}`
+                  : `${pL0.def?.length ?? 0}-${pL0.att?.length ?? 0}`;
+                const hasFormationOverride = perPeriodFormations[i] != null;
                 return (
                 <div key={i}>
                   {/* Mobile break separator between periods */}
@@ -2447,6 +2593,21 @@ export default function App() {
                         <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em", color: "#0a0a0a" }}>
                           Period {i + 1}
                         </div>
+                        {settings.positions !== false && periodFormationName && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setFormationPicker(i); }}
+                            title="Byt formation för denna period"
+                            style={{
+                              fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+                              background: hasFormationOverride ? "#facc15" : "#ffffff",
+                              color: "#0a0a0a", border: "1.5px solid #0a0a0a",
+                              borderRadius: 4, padding: "2px 7px", fontWeight: 700,
+                              cursor: "pointer", letterSpacing: "0.02em",
+                              display: "inline-flex", alignItems: "center", gap: 3,
+                            }}>
+                            {periodFormationName} <ChevronDown size={10} />
+                          </button>
+                        )}
                         {collapsedPeriods.has(i)
                           ? <ChevronRight size={14} color="#525252" />
                           : <ChevronDown size={14} color="#525252" />}
